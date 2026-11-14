@@ -74,3 +74,12 @@ add_executable(CoreInventoryTest
     core/sales_manager.cpp
 )
 target_include_directories(CoreInventoryTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+enable_testing()
+
+add_test(NAME CoreTest COMMAND CoreTest)
+add_test(NAME CoreInventoryTest COMMAND CoreInventoryTest)
+add_test(NAME GuiCheckoutTest COMMAND GuiCheckoutTest)
+set_tests_properties(GuiCheckoutTest PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)

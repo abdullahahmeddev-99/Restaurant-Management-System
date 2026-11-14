@@ -1,11 +1,14 @@
 #include <QApplication>
+#include <QDialog>
 #include <QDoubleSpinBox>
+#include <QLineEdit>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QTableWidget>
-#include <QLineEdit>
-#include <cassert>
+#include <QTimer>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 #include "core/meal_logic.h"
 #include "core/order_manager.h"
@@ -16,13 +19,24 @@
 #include "gui/dialogs/invoice_dialog.h"
 
 namespace {
+int g_failures = 0;
+
+void check(bool condition, const char* message) {
+    if (condition) {
+        std::printf("  ok   %s\n", message);
+    } else {
+        std::printf("  FAIL %s\n", message);
+        ++g_failures;
+    }
+}
+
 bool near(double lhs, double rhs) { return std::fabs(lhs - rhs) < 0.01; }
 
 Order makePizzaOrder(RestaurantData& data) {
     Order order;
     order.customer.order_type = OrderType::Takeaway;
     // Distinct sizes prove the invoice/cart detail carries actual menu prices.
-    assert(addPizzaToOrder(order, data, {1, 2}));
+    check(addPizzaToOrder(order, data, {1, 2}), "add Large + Medium pizza");
     calculate(order, data);
     return order;
 }
@@ -38,6 +52,39 @@ QRadioButton* radioWithText(QWidget& widget, const QString& text) {
         if (radio->text().contains(text)) return radio;
     return nullptr;
 }
+
+QWidget* activeModalDialog() {
+    QWidget* modal = QApplication::activeModalWidget();
+    if (modal) return modal;
+    for (QWidget* widget : QApplication::topLevelWidgets())
+        if (widget->isVisible() && qobject_cast<QDialog*>(widget)) return widget;
+    return nullptr;
+}
+
+// The credit-card flow opens modal dialogs with exec(), which blocks the
+// caller. This handler runs on a timer inside those nested event loops and
+// fills/confirms each dialog as soon as it appears.
+void driveModalDialogs() {
+    QWidget* modal = activeModalDialog();
+    if (auto* card = qobject_cast<CardDetailsDialog*>(modal)) {
+        auto* number = card->findChild<QLineEdit*>("cardNumberEdit");
+        if (number && number->text().isEmpty()) {
+            number->setText("4532123456789012");
+            card->findChild<QLineEdit*>("cardholderNameEdit")->setText("Test User");
+            card->findChild<QLineEdit*>("expiryDateEdit")->setText("12/30");
+            card->findChild<QLineEdit*>("cvvEdit")->setText("123");
+            if (QPushButton* verify = buttonWithText(*card, "Verify Card"))
+                verify->click();
+        }
+    } else if (auto* otp = qobject_cast<OtpVerificationDialog*>(modal)) {
+        auto* input = otp->findChild<QLineEdit*>("otpInputEdit");
+        if (input && input->text().isEmpty()) {
+            input->setText(otp->getGeneratedOtp());
+            if (QPushButton* verify = buttonWithText(*otp, "Verify Payment"))
+                verify->click();
+        }
+    }
+}
 }
 
 int main(int argc, char* argv[]) {
@@ -45,103 +92,116 @@ int main(int argc, char* argv[]) {
     RestaurantData data;
     constexpr double total = 456.00; // Pizza L + M = $400; 14% tax = $56.
 
-    // 1. Exact cash and 2. overpayment/change.
+    std::printf("RUNNING GUI CHECKOUT TESTS\n");
+
+    // 1. Exact cash payment.
     Order exact = makePizzaOrder(data);
-    assert(data.pizza_stock == 50);  // Stock not deducted during add
+    check(data.pizza_stock == 50, "stock not deducted during add");
     PaymentDialog exactDialog(exact, data);
     buttonWithText(exactDialog, "Confirm Order")->click();
-    assert(exactDialog.paymentConfirmed() && near(exact.bill.paid_amount, total));
-    assert(data.pizza_stock == 48);  // Stock deducted after payment (2 pizzas)
-    assert(data.total_orders == 1 && data.cash_orders == 1 && near(data.total_sales, total));
+    check(exactDialog.paymentConfirmed() && near(exact.bill.paid_amount, total),
+          "exact cash confirms payment");
+    check(data.pizza_stock == 48, "stock deducted after payment (2 pizzas)");
+    check(data.total_orders == 1 && data.cash_orders == 1 && near(data.total_sales, total),
+          "cash counters updated");
 
+    // 2. Overpayment produces change.
     Order over = makePizzaOrder(data);
-    assert(data.pizza_stock == 48);  // Stock unchanged by add
+    check(data.pizza_stock == 48, "stock unchanged by add");
     PaymentDialog overDialog(over, data);
     overDialog.findChild<QDoubleSpinBox*>()->setValue(500.00);
     buttonWithText(overDialog, "Confirm Order")->click();
-    assert(overDialog.paymentConfirmed() && near(getChangeAmount(over), 44.00));
-    assert(data.pizza_stock == 46);  // Stock deducted after payment (2 more pizzas)
-    assert(data.total_orders == 2 && data.cash_orders == 2 && near(data.total_sales, total * 2));
+    check(overDialog.paymentConfirmed() && near(getChangeAmount(over), 44.00),
+          "overpayment yields $44 change");
+    check(data.pizza_stock == 46, "stock deducted after payment");
+    check(data.total_orders == 2 && data.cash_orders == 2 && near(data.total_sales, total * 2),
+          "cash counters updated");
 
     // 3. Insufficient cash does not complete or alter counters.
     Order insufficient = makePizzaOrder(data);
-    assert(data.pizza_stock == 46);  // Stock unchanged by add
+    check(data.pizza_stock == 46, "stock unchanged by add");
     PaymentDialog insufficientDialog(insufficient, data);
     insufficientDialog.findChild<QDoubleSpinBox*>()->setValue(455.99);
     QApplication::processEvents();
-    assert(!buttonWithText(insufficientDialog, "Confirm Order")->isEnabled());
+    check(!buttonWithText(insufficientDialog, "Confirm Order")->isEnabled(),
+          "confirm disabled for insufficient cash");
     buttonWithText(insufficientDialog, "Confirm Order")->click();
-    assert(!insufficientDialog.paymentConfirmed());
-    assert(data.pizza_stock == 46);  // Stock unchanged (payment failed)
-    assert(data.total_orders == 2 && data.cash_orders == 2 && near(data.total_sales, total * 2));
+    check(!insufficientDialog.paymentConfirmed(), "insufficient cash not confirmed");
+    check(data.pizza_stock == 46, "stock unchanged after failed payment");
+    check(data.total_orders == 2 && data.cash_orders == 2 && near(data.total_sales, total * 2),
+          "counters unchanged after failed payment");
 
-    // 4. Credit card and 5. wallet use the full Core total.
+    // 4. Credit card flow (card details + OTP are modal).
     Order card = makePizzaOrder(data);
-    assert(data.pizza_stock == 46);  // Stock unchanged by add
+    check(data.pizza_stock == 46, "stock unchanged by add");
     PaymentDialog cardDialog(card, data);
     radioWithText(cardDialog, "Credit Card")->click();
-    buttonWithText(cardDialog, "Confirm Order")->click();
-    
-    // Simulate Card Details Dialog
-    CardDetailsDialog* cardDetailsDlg = cardDialog.findChild<CardDetailsDialog*>();
-    if (cardDetailsDlg) {
-        cardDetailsDlg->findChild<QLineEdit*>("cardNumberEdit")->setText("4532123456789012");
-        cardDetailsDlg->findChild<QLineEdit*>("cardholderNameEdit")->setText("Test User");
-        cardDetailsDlg->findChild<QLineEdit*>("expiryDateEdit")->setText("12/25");
-        cardDetailsDlg->findChild<QLineEdit*>("cvvEdit")->setText("123");
-        buttonWithText(*cardDetailsDlg, "Verify Card")->click();
-        QApplication::processEvents();
-    }
-    
-    // Simulate OTP Verification Dialog
-    OtpVerificationDialog* otpDlg = cardDialog.findChild<OtpVerificationDialog*>();
-    if (otpDlg) {
-        QString otp = otpDlg->getGeneratedOtp();
-        otpDlg->findChild<QLineEdit*>("otpInputEdit")->setText(otp);
-        buttonWithText(*otpDlg, "Verify Payment")->click();
-        QApplication::processEvents();
-    }
-    
-    assert(cardDialog.paymentConfirmed() && card.bill.payment == PaymentMethod::CreditCard && near(card.bill.paid_amount, total));
-    assert(data.pizza_stock == 44);  // Stock deducted after payment
-    assert(data.total_orders == 3 && data.card_orders == 1 && near(data.total_sales, total * 3));
 
+    QTimer driver;
+    driver.setInterval(10);
+    QObject::connect(&driver, &QTimer::timeout, [] { driveModalDialogs(); });
+    driver.start();
+    buttonWithText(cardDialog, "Confirm Order")->click();
+    driver.stop();
+
+    check(cardDialog.paymentConfirmed() && card.bill.payment == PaymentMethod::CreditCard &&
+              near(card.bill.paid_amount, total),
+          "credit card confirms payment");
+    check(data.pizza_stock == 44, "stock deducted after card payment");
+    check(data.total_orders == 3 && data.card_orders == 1 && near(data.total_sales, total * 3),
+          "card counters updated");
+
+    // 5. Wallet uses the full Core total.
     Order wallet = makePizzaOrder(data);
-    assert(data.pizza_stock == 44);  // Stock unchanged by add
+    check(data.pizza_stock == 44, "stock unchanged by add");
     PaymentDialog walletDialog(wallet, data);
     radioWithText(walletDialog, "Wallet")->click();
     buttonWithText(walletDialog, "Confirm Order")->click();
-    assert(walletDialog.paymentConfirmed() && wallet.bill.payment == PaymentMethod::Wallet && near(wallet.bill.paid_amount, total));
-    assert(data.pizza_stock == 42);  // Stock deducted after payment
-    assert(data.total_orders == 4 && data.wallet_orders == 1 && near(data.total_sales, total * 4));
+    check(walletDialog.paymentConfirmed() && wallet.bill.payment == PaymentMethod::Wallet &&
+              near(wallet.bill.paid_amount, total),
+          "wallet confirms payment");
+    check(data.pizza_stock == 42, "stock deducted after wallet payment");
+    check(data.total_orders == 4 && data.wallet_orders == 1 && near(data.total_sales, total * 4),
+          "wallet counters updated");
 
     // 6. Two UI clicks still produce one completed payment.
     Order rapid = makePizzaOrder(data);
-    assert(data.pizza_stock == 42);  // Stock unchanged by add
+    check(data.pizza_stock == 42, "stock unchanged by add");
     PaymentDialog rapidDialog(rapid, data);
     QPushButton* rapidConfirm = buttonWithText(rapidDialog, "Confirm Order");
     rapidConfirm->click();
     rapidConfirm->click();
-    assert(rapidDialog.paymentConfirmed());
-    assert(data.pizza_stock == 40);  // Stock deducted only once
-    assert(data.total_orders == 5 && data.cash_orders == 3 && near(data.total_sales, total * 5));
+    check(rapidDialog.paymentConfirmed(), "rapid clicks still confirm once");
+    check(data.pizza_stock == 40, "stock deducted only once");
+    check(data.total_orders == 5 && data.cash_orders == 3 && near(data.total_sales, total * 5),
+          "rapid click counters correct");
 
     // 7. Cancel does not complete or change counters.
     Order cancelled = makePizzaOrder(data);
-    assert(data.pizza_stock == 40);  // Stock unchanged by add
+    check(data.pizza_stock == 40, "stock unchanged by add");
     PaymentDialog cancelDialog(cancelled, data);
     buttonWithText(cancelDialog, "Cancel")->click();
-    assert(!cancelDialog.paymentConfirmed());
-    assert(data.pizza_stock == 40);  // Stock unchanged (payment canceled)
-    assert(data.total_orders == 5 && near(data.total_sales, total * 5));
+    check(!cancelDialog.paymentConfirmed(), "cancel does not confirm payment");
+    check(data.pizza_stock == 40, "stock unchanged after cancel");
+    check(data.total_orders == 5 && near(data.total_sales, total * 5),
+          "counters unchanged after cancel");
 
-    // 8. Invoice shows Core totals plus distinct pizza-size details, not an average unit price.
+    // 8. Invoice shows Core totals plus distinct pizza-size details.
     InvoiceDialog invoice(exact);
     QTableWidget* items = invoice.findChild<QTableWidget*>();
-    assert(items && items->rowCount() == 1);
-    assert(items->item(0, 0)->text().contains("Large x1 @ $250.00"));
-    assert(items->item(0, 0)->text().contains("Medium x1 @ $150.00"));
-    assert(items->item(0, 2)->text() == "$400.00");
+    check(items && items->rowCount() == 1, "invoice has one row");
+    if (items && items->rowCount() == 1) {
+        check(items->item(0, 0)->text().contains("Large x1 @ $250.00"),
+              "invoice shows Large pizza price");
+        check(items->item(0, 0)->text().contains("Medium x1 @ $150.00"),
+              "invoice shows Medium pizza price");
+        check(items->item(0, 2)->text() == "$400.00", "invoice line total is $400.00");
+    }
 
+    if (g_failures != 0) {
+        std::printf("GUI CHECKOUT TESTS FAILED (%d)\n", g_failures);
+        return 1;
+    }
+    std::printf("ALL GUI CHECKOUT TESTS PASSED\n");
     return 0;
 }

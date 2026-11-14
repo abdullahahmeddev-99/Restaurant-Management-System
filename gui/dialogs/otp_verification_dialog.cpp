@@ -86,6 +86,7 @@ void OtpVerificationDialog::setupUi() {
     mainLayout->addWidget(otpLabel);
 
     otpInputEdit = new QLineEdit(this);
+    otpInputEdit->setObjectName("otpInputEdit");
     otpInputEdit->setPlaceholderText("Enter 6-digit code");
     otpInputEdit->setMaxLength(6);
     otpInputEdit->setFixedHeight(40);

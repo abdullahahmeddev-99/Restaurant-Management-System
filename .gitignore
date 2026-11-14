@@ -1,26 +1,51 @@
+# Build output
 build/
-test/
-Antigravity/
-.continue/
-portfolio/
-
-*.exe
-*.dll
-*.o
-*.obj
-*.user
-*.log
-
-.vscode/
-.idea/
+build-*/
+build_*/
+out/
+cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+compile_commands.json
 
+# Local-only workspaces / tooling
+test/
+Antigravity/
+.agents/
+.continue/
+portfolio/
+.vscode/
+.idea/
+.clangd/
+.opencode/
+
+# Compiled binaries
+*.exe
+*.dll
+*.o
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.a
+*.so
+*.dylib
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
+*.user
+
+# Scratch / throwaway files
 tempCodeRunnerFile.cpp
+tempCodeRunnerFile.exe
 ABD.cpp
 C##.cpp
+C+.cpp
 c+.cpp
 ess.cpp
 Panda.ipynb

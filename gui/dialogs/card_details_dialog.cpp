@@ -43,6 +43,7 @@ void CardDetailsDialog::setupUi() {
     mainLayout->addWidget(cardNumLabel);
 
     cardNumberEdit = new QLineEdit(this);
+    cardNumberEdit->setObjectName("cardNumberEdit");
     cardNumberEdit->setPlaceholderText("e.g. 4532123456789012");
     cardNumberEdit->setMaxLength(16);
     cardNumberEdit->setFixedHeight(40);
@@ -55,6 +56,7 @@ void CardDetailsDialog::setupUi() {
     mainLayout->addWidget(nameLabel);
 
     cardholderNameEdit = new QLineEdit(this);
+    cardholderNameEdit->setObjectName("cardholderNameEdit");
     cardholderNameEdit->setPlaceholderText("Full name as it appears on card");
     cardholderNameEdit->setFixedHeight(40);
     mainLayout->addWidget(cardholderNameEdit);
@@ -67,6 +69,7 @@ void CardDetailsDialog::setupUi() {
     QLabel *expiryLabel = new QLabel("Expiry Date (MM/YY):", this);
     expiryLabel->setStyleSheet("font-size: 13px; font-weight: 600; color: #1E1E24;");
     expiryDateEdit = new QLineEdit(this);
+    expiryDateEdit->setObjectName("expiryDateEdit");
     expiryDateEdit->setPlaceholderText("MM/YY");
     expiryDateEdit->setMaxLength(5);
     expiryDateEdit->setFixedHeight(40);
@@ -78,6 +81,7 @@ void CardDetailsDialog::setupUi() {
     QLabel *cvvLabel = new QLabel("CVV (3 digits):", this);
     cvvLabel->setStyleSheet("font-size: 13px; font-weight: 600; color: #1E1E24;");
     cvvEdit = new QLineEdit(this);
+    cvvEdit->setObjectName("cvvEdit");
     cvvEdit->setPlaceholderText("CVV");
     cvvEdit->setMaxLength(3);
     cvvEdit->setEchoMode(QLineEdit::Password);
